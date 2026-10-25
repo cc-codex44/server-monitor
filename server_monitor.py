@@ -1,75 +1,92 @@
+import argparse
 import os
 import platform
 import shutil
+import sys
 import time
 from datetime import datetime
 
 import psutil
 
 
-def progress_bar(value, width=24):
-    value = max(0, min(100, value))
-    filled = int(width * value / 100)
-    return "█" * filled + "░" * (width - filled)
-
-
-def get_temperature():
+def glyphs():
     try:
-        temperatures = psutil.sensors_temperatures()
-        for sensors in temperatures.values():
-            for sensor in sensors:
-                if sensor.current is not None:
-                    return f"{sensor.current:.1f}°C"
+        "╔═╗║╠╣╚╝█░°".encode(sys.stdout.encoding or "utf-8")
+        return "╔", "═", "╗", "║", "╠", "╣", "╚", "╝", "█", "░", "°C"
+    except (UnicodeEncodeError, LookupError):
+        return "+", "-", "+", "|", "+", "+", "+", "+", "#", ".", "C"
+
+
+def temperature(unit):
+    try:
+        for entries in psutil.sensors_temperatures().values():
+            for entry in entries:
+                if entry.current is not None:
+                    return f"{entry.current:.1f}{unit}" if unit == "°C" else f"{entry.current:.1f} C"
     except (AttributeError, OSError):
         pass
     return "N/A"
 
 
-def get_disk_info():
-    disk = shutil.disk_usage(os.path.abspath(os.sep))
-    return disk.used / disk.total * 100, disk.used / 1024**3, disk.total / 1024**3
+def draw_dashboard(once=False):
+    tl, h, tr, v, ml, mr, bl, br, full, empty, unit = glyphs()
+    width = 56
 
+    def border(left, right):
+        print(left + h * width + right)
 
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
+    def row(value):
+        print(v + " " + value[: width - 2].ljust(width - 2) + " " + v)
 
+    def bar(label, value):
+        value = max(0, min(100, value))
+        filled = int(24 * value / 100)
+        row(f"{label:<5} {full * filled}{empty * (24 - filled)} {value:5.1f}%")
 
-def draw_dashboard():
     cpu = psutil.cpu_percent(interval=0.5)
     memory = psutil.virtual_memory()
-    disk_percent, disk_used, disk_total = get_disk_info()
-    temperature = get_temperature()
+    disk = shutil.disk_usage(os.path.abspath(os.sep))
     net = psutil.net_io_counters()
 
-    clear_screen()
-    print("╔" + "═" * 56 + "╗")
-    print("║" + " " * 18 + "SERVER MONITOR" + " " * 24 + "║")
-    print("╠" + "═" * 56 + "╣")
-    print(f"║ Host: {platform.node():<48} ║")
-    print(f"║ OS:   {platform.system()} {platform.release():<44} ║")
-    print(f"║ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S'):<48} ║")
-    print("╠" + "═" * 56 + "╣")
-    print(f"║ CPU      {progress_bar(cpu)}  {cpu:5.1f}%{' ' * 12}║")
-    print(f"║ RAM      {progress_bar(memory.percent)}  {memory.percent:5.1f}%{' ' * 12}║")
-    print(f"║ DISK     {progress_bar(disk_percent)}  {disk_percent:5.1f}%{' ' * 12}║")
-    print(f"║ TEMP     {temperature:<47}║")
-    print("╠" + "═" * 56 + "╣")
-    print("║ STORAGE")
-    print(f"║ Used:    {disk_used:,.1f} GB")
-    print(f"║ Total:   {disk_total:,.1f} GB")
-    print("╠" + "═" * 56 + "╣")
-    print("║ NETWORK")
-    print(f"║ Received: {net.bytes_recv / 1024**3:,.2f} GB")
-    print(f"║ Sent:     {net.bytes_sent / 1024**3:,.2f} GB")
-    print("╠" + "═" * 56 + "╣")
-    print("║ Refreshing every 2 seconds...  Press Ctrl+C to exit.")
-    print("╚" + "═" * 56 + "╝")
+    if sys.stdout.isatty() and not once:
+        os.system("cls" if os.name == "nt" else "clear")
+    border(tl, tr)
+    row("SERVER MONITOR")
+    border(ml, mr)
+    row(f"Host: {platform.node()}")
+    row(f"OS:   {platform.system()} {platform.release()}")
+    row(f"Time: {datetime.now():%Y-%m-%d %H:%M:%S}")
+    border(ml, mr)
+    bar("CPU", cpu)
+    bar("RAM", memory.percent)
+    bar("DISK", disk.used / disk.total * 100)
+    row(f"TEMP  {temperature(unit)}")
+    border(ml, mr)
+    row("STORAGE (system drive)")
+    row(f"Used:  {disk.used / 1024**3:,.1f} GB")
+    row(f"Total: {disk.total / 1024**3:,.1f} GB")
+    border(ml, mr)
+    row("NETWORK (total since boot)")
+    row(f"Received: {net.bytes_recv / 1024**3:,.2f} GB")
+    row(f"Sent:     {net.bytes_sent / 1024**3:,.2f} GB")
+    border(ml, mr)
+    row("Snapshot" if once else "Refresh: 2 seconds  |  Press Ctrl+C to exit")
+    border(bl, br)
 
 
-try:
-    while True:
-        draw_dashboard()
-        time.sleep(2)
-except KeyboardInterrupt:
-    clear_screen()
-    print("Server Monitor stopped.")
+def main():
+    parser = argparse.ArgumentParser(description="Terminal dashboard for server health")
+    parser.add_argument("--once", action="store_true", help="print one snapshot and exit")
+    args = parser.parse_args()
+    try:
+        while True:
+            draw_dashboard(once=args.once)
+            if args.once:
+                return
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\nServer Monitor stopped.")
+
+
+if __name__ == "__main__":
+    main()
